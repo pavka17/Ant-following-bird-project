@@ -1,0 +1,414 @@
+---
+title: "Ant-following birds: Statistical analysis"
+output: html_notebook
+---
+
+We assessed how much more percentage overlap in the distribution of birds and ants occurs due to the intensity of the interaction (i.e. obligate ant-following birds vs facultative ant-following birds) using a Bayesian regression model (Bürkner, 2017; Gelman et al., 2020). Model took the form
+
+$P = B_o + X_iB_1$.
+
+where $P$ is overlap proportion among bird and ants, $X_i$ is a categorical predictor identifying obligate ant-following bird species. $B_o$ is a predicted parameter of overlap proportion of facultative ant-following bird species, and $B_1$ is a parameter of variation on predicted overlap proportion if bird is an obligate ant-following bird species. Bayesian regression models was fit using Beta distribution, given that data are proportions, in the "brms" package in R (Bürkner, 2017; Core Team, 2017). Implementing a Bayesian regression model allows us to estimate the variation on parameters $B_o$ and $B_1$. 
+
+We also evaluated how much larger areas were estimated in the SDMs due to the intensity of the interaction using a Bayesian robust regression model, given area is a continuous variable (Bürkner, 2017; Gelman et al., 2020). Models took the form
+
+$A = B_f + X_iB + \epsilon$
+
+where $A$ is the estimated area ($km^2$), and $X_i$ is a categorical predictor identifying obligate ant-following bird species, as before. $B_f$ is a predicted parameter of estimated area of facultative ant-following bird species, and $B$ is a parameter of variation on predicted estimated area if bird is an obligate ant-following bird species. $\epsilon$ is t-distributed error of the model. Robust regression models were fit using Student family in the "brms" package in R (Bürkner, 2017; Core Team, 2017), so coefficient estimated were less influenced by outliers.
+
+We fit all models by simulating the posterior parameter distributions using the "brms" package in program R (Bürkner, 2017; Core Team, 2017). We ran simulations to the posterior distributions on four Markov Chain Monte Carlo (MCMC). MCMC sampling of posteriors was performed in 1000 iterations by chain after 3000 warmup iterations. We visually checked chain convergence and the scale reduction factor, $\hat{R} < 1.1$, for all parameters.
+
+
+References
+
+Bürkner, P.-C. 2017. brms: An R package for Bayesian multilevel models using Stan. Journal of Statistical Software, 80:1–28
+
+Core Team, R. 2017. R: A language and environment for statistical computing. R Foundation for Statistical Computing, Viena, Austria.
+
+Gelman, A., J. Hill, and A. Vehtari. 2020. Regression and other stories. Cambridge University Press.
+
+
+
+```{r}
+## Cargar paquetes requeridos
+library (tidyverse)
+library (brms)
+library(gridExtra)
+library(broom)
+library(coda)
+library(bayesplot)
+library(tidybayes)
+library(ggplotify)
+library(patchwork)
+library(cowplot)
+library(easyGgplot2)
+library(ggthemes)
+library(emmeans)
+
+## Directorio de trabajo
+
+setwd("C:/Users/Pavka/Documents/R_ejercicio/Aves")
+
+```
+
+Loading data set
+```{r}
+
+aves <- read.csv ("aves_hormigas.csv")
+aves_eciton <- filter(aves, Hor_no == 1) ## Separando los valores de las especies traslapadas con Eciton
+aves_labidus <- filter(aves, Hor_no == 2) ## Separando los valores de las especies traslapadas con Labidus
+aves_3 <- aves[c(1,2,3,4,5,6,7,8,9,10),]
+
+area <- read.csv ("aves_areas.csv")
+
+head(aves)
+head(aves_3)
+head(area)
+```
+
+
+Comparando los porcentajes de traslape "3" usando un modelo de regresión bayesiano.
+
+```{r}
+## setting a prior
+
+formula  <- bf(
+  # mu (mean) part
+  (P./100) ~ Interaccion,
+  # phi (precision) part
+  phi ~ Interaccion
+)
+
+## Using the comand get_prior() 
+
+get_prior(formula, data= aves_3, family = Beta())
+
+## Setting priors
+
+priors <- c(set_prior("student_t(3, 0, 2.5)", class = "Intercept"),
+            set_prior("normal(0, 1)", class = "b"))
+```
+
+
+De estos resultados observamos que tenemos estimaciones confiables porque rhat~ 1.
+Las estimaciones estan en escala logistica. 
+El intervalo creible para $B_o$ (i.e. Intercept) no incluyen el valor 0. 
+El intervalo creible para $B_1$ (i.e. InteraccionObligada) incluyen el 0, lo que indica que no hay un efecto de variacion en el porcentaje esperado de traslape dada la intensidad de la interacción.
+
+```{r}
+
+## El porcentaje de de traslape (3) es la columna P.
+## Phi es un factor de precisión usado en una regresión bayesiana con distribución Beta
+## El prior es no informativo. Podriamos usar algun porcentaje.
+
+brms_aves3_beta <- brm(bf((P./100) ~ Interaccion, phi ~ Interaccion), data= aves_3, chains =4, iter = 4000, warmup = 3000, family = Beta(), prior = priors , core =4)
+
+print(summary(brms_aves3_beta),digits =4)
+
+```
+
+Verificamos que la MCMC alcanzaron convergencia y esten en un momento estacionario.
+
+```{r}
+
+plot(as.mcmc(brms_aves3_beta))
+```
+
+Verificamos graficamente si la distribución de densidad estimada de los parametros ($B_o$ y $B_1$) incluye al cero.
+```{r}
+plot(conditional_effects(brms_aves3_beta),points =T)
+
+mcmc_areas(as.matrix(brms_aves3_beta),  regex_pars = c("b_Intercept", "b_InteraccionObligada"))+
+scale_y_discrete(labels = c("b_Intercept"= "B_o", "b_InteraccionObligada" = "B_1"))
+```
+
+```{r}
+
+mcmc_areas(as.matrix(brms_aves3_beta),  regex_pars = c("b_InteraccionObligada"))+
+scale_y_discrete(labels = c("b_InteraccionObligada" = "B_1"))
+```
+Otra manera de verificarlo es por medio del comandy hypothesis. En este caso vemos que no es mayor que cero.
+```{r}
+h<- c("InteraccionObligada > 0")
+hyp <- hypothesis(brms_aves3_beta, h)
+plot(hyp)
+```
+
+Arreglo de datos para graficamente observar la distribución de densidades estimada del porcentaje de traslape para las especies de aves que siguen hormigas de acuerdo a la intesidad de la interacción.
+
+```{r}
+
+posterior_b <- brms_aves3_beta %>%
+  gather_draws(`b_.*`, regex = TRUE)
+## Facultativa
+
+b_facultativa <- as.data.frame((plogis(posterior_b$.value[posterior_b$.variable== "b_Intercept"]))*100)
+colnames(b_facultativa) <- c("esperado")
+b_facultativa$Interaccion <- c("Facultativa")
+b_facultativa$Interaccion_2 <- c("Facultative ant-following birds")
+b_facultativa$T_n<- c("2")
+
+
+
+b_obligada <- as.data.frame((plogis(posterior_b$.value[posterior_b$.variable== "b_InteraccionObligada"]+ posterior_b$.value[posterior_b$.variable== "b_Intercept"]))*100)
+colnames(b_obligada) <- c("esperado")
+b_obligada$Interaccion<- c("Obligada") 
+b_obligada$Interaccion_2 <- c("Obligate ant-following birds")
+b_obligada$T_n <- c("1")
+
+
+b <- rbind(b_facultativa, b_obligada)                      
+
+
+```
+
+En promedio el porcentaje de traslape en la distribución potencial de las aves y hormigas es mayor para aquellas aves que siguen hormigas de manera obligas (88%) que para aquellas hormigas que las siguen de forma facultativa (79%). Sin embargo, los intervalos creibles del 95% del porcentaje de traslape de las aves que siguen hormigas de forma obligada (c.i.= 88%, 94%) se traslapa con el correspondiente intevalo creible del 95% de las aves que siguen hormigas de forma facultativa (c.i. = 66%, 87%).
+
+
+Promedio e intervalo creible de 95% de $B_o$
+```{r}
+mean (b_obligada$esperado)
+quantile (b_obligada$esperado, probs = c(0.025, 0.975))
+
+```
+
+Promedio e intervalo creible de 95% de $B_1$
+```{r}
+mean (b_facultativa$esperado)
+quantile (b_facultativa$esperado, probs = c(0.025, 0.975))
+
+```
+
+Figura de la distribución de densidades esperadas para el porcentaje de traslape de acuerdo a la intensidad de la interacción.
+
+```{r}
+traslape_aves <-ggplot2.density (data= b, xName = "esperado", groupName = "Interaccion_2",
+                 alpha=0.5, fillGroupDensity = T,  xtitle = "Predicted percentage of overlap", ytitle=   "Density", groupColors=c('#218380', "#9D75CB"))+
+guides(fill = guide_legend(reverse = TRUE))+
+theme(legend.position = c(.3, .9), legend.title=element_blank(), axis.line = element_line(linewidth =1, colour="black"),
+        #axis.text.x = element_blank(),
+        axis.line.y.left = element_line(linewidth = 0.8, colour = "black"),
+        panel.background = element_rect(fill = "white"),
+        #strip.background = element_rect(colour = "white", fill = "white"),
+        #strip.text = element_text(size = 18),
+        axis.text=element_text(size=18),
+        axis.title=element_text(size=18,face="bold"),
+        legend.text=element_text(size=14),
+        panel.border = element_rect(colour = "black", fill=NA, size=1),
+        plot.title = element_text(hjust = 0.5, size= 18)
+  )
+
+traslape_aves
+
+```
+
+El traslape de los intervalos se observa claramente en la siguiente figura
+```{r}
+ggplot2.density (data= beta_bayes_pred, xName = "Percentage", groupName = "Interaccion",
+                 alpha=0.5, fillGroupDensity = T,  xtitle = "Predicted percentage of overlap", ytitle=   "Density", groupColors=c('#218380', "#9D75CB"))+
+  stat_halfeye(.width = c(0.8, 0.95), point_interval = "median_hdi") +
+guides(fill = guide_legend(reverse = TRUE))+
+theme(legend.position = c(.15, .9), legend.title=element_blank(), axis.line = element_line(linewidth =1, colour="black"),
+        #axis.text.x = element_blank(),
+        axis.line.y.left = element_line(linewidth = 0.8, colour = "black"),
+        panel.background = element_rect(fill = "white"),
+        #strip.background = element_rect(colour = "white", fill = "white"),
+        #strip.text = element_text(size = 18),
+        axis.text=element_text(size=18),
+        axis.title=element_text(size=18,face="bold"),
+        legend.text=element_text(size=14),
+        panel.border = element_rect(colour = "black", fill=NA, size=1),
+        plot.title = element_text(hjust = 0.5, size= 18)
+  )
+```
+
+El efecto marginal de la intensidad de la interacción es en promedio de 9% (resta entre los porcentajes de traslape de aves obligadas - facultativas), sin embargo su intervalo va de -4.5% a 22.9%. Lo que nos confirma que no tenemos evidencia de que la intensidad de la interacción afecte el porcentaje de traslape.
+
+```{r}
+emmeans(brms_aves3_beta, ~ Interaccion,
+        regrid = "response") %>% 
+  contrast(method = "revpairwise")
+```
+Observamos graficamente el intervalo del efecto marginal de la intensidad de la interacción.
+```{r}
+marginal_effects <- as.data.frame( b$esperado[b$Interaccion == "Obligada"] - b$esperado[b$Interaccion=="Facultativa"])
+colnames(marginal_effects) <- c("Marginal")
+
+ggplot(marginal_effects, aes(x = Marginal)) +
+  stat_halfeye(.width = c(0.8, 0.95), point_interval = "median_hdi",
+               fill = "#9d75cb") +
+  labs(x = "Average marginal effect of having an obligate ant-following bird interaction", 
+       y = NULL, caption = "80% and 95% credible intervals shown in black") +
+ theme(legend.position = "None", legend.title=element_blank(), axis.line = element_line(linewidth =1, colour="black"),
+        #axis.text.x = element_blank(),
+        axis.line.y.left = element_line(linewidth = 0.8, colour = "black"),
+        panel.background = element_rect(fill = "white"),
+        #strip.background = element_rect(colour = "white", fill = "white"),
+        #strip.text = element_text(size = 18),
+        axis.text=element_text(size=18),
+        axis.title=element_text(size=18,face="bold"),
+        legend.text=element_text(size=14),
+        panel.border = element_rect(colour = "black", fill=NA, size=1),
+        plot.title = element_text(hjust = 0.5, size= 18)
+  )
+
+
+```
+
+
+Area
+
+```{r}
+brms_area <- brm( area_km2 ~ Int , data=area, chains =4, iter = 4000, warmup = 3000, family =student, prior = NULL, cores = 4)
+
+#brms_CN <- brm(log(CN) ~ Species, data= base_p, chains =4, iter = 4000, warmup = 3000, family =student, prior = NULL )
+
+```
+```{r}
+print(summary(brms_area),digits =4)
+```
+
+```{r}
+plot(as.mcmc(brms_area))
+```
+
+
+```{r}
+plot(conditional_effects(brms_area),points =T)
+
+mcmc_areas(as.matrix(brms_area),  regex_pars = c("b_Intercept", "b_IntObligada"))+
+scale_y_discrete(labels = c("b_Intercept"= "B_f", "b_IntObligada" = "B"))
+```
+
+Otra manera de verificarlo es por medio del comando hypothesis. En este caso vemos que no es menor que cero.
+```{r}
+h_2<- c("IntObligada < 0")
+hyp_2 <- hypothesis(brms_area, h_2)
+plot(hyp_2)
+```
+
+Arreglo de datos para graficamente observar la distribución de densidades estimada del area para las especies de aves que siguen hormigas de acuerdo a la intesidad de la interacción.
+
+```{r}
+
+posterior_b <- brms_area %>%
+  gather_draws(`b_.*`, regex = TRUE)
+## Facultativa
+
+b_facultativa_a <- as.data.frame(((posterior_b$.value[posterior_b$.variable== "b_Intercept"])))
+colnames(b_facultativa_a) <- c("esperado")
+b_facultativa_a$Interaccion <- c("Facultative")
+b_facultativa_a$Interaccion_2 <- c("Facultative ant-following birds")
+b_facultativa_a$T_n<- c("2")
+
+
+
+b_obligada_a <- as.data.frame(((posterior_b$.value[posterior_b$.variable== "b_IntObligada"]+ posterior_b$.value[posterior_b$.variable== "b_Intercept"])))
+colnames(b_obligada_a) <- c("esperado")
+b_obligada_a$Interaccion<- c("Obligate") 
+b_obligada_a$Interaccion_2 <- c("Obligate ant-following birds")
+b_obligada_a$T_n <- c("1")
+
+
+b_a <- rbind(b_facultativa_a, b_obligada_a)                      
+
+
+```
+
+
+En promedio el area estimada en la distribución potencial de las aves y hormigas es mayor para aquellas aves que siguen hormigas de manera facultativa (6613 $km^2$) que para aquellas hormigas que las siguen de forma obligada (3720). Los intervalos creibles del 95% del porcentaje de traslape de las aves que siguen hormigas de forma obligada (c.i.= 1523, 6016 $km^2$) se traslapa en su extremo superior con el correspondiente intevalo creible del 95% de las aves que siguen hormigas de forma facultativa (c.i. = 4439, 8827 $km^2$).
+
+
+Promedio e intervalo creible de 95% de area para las aves que siguen hormigas de manera obligada
+```{r}
+mean (b_obligada_a$esperado)
+quantile (b_obligada_a$esperado, probs = c(0.025, 0.975))
+
+```
+
+Promedio e intervalo creible de 95% de $B_f$
+```{r}
+mean (b_facultativa_a$esperado)
+quantile (b_facultativa_a$esperado, probs = c(0.025, 0.975))
+
+```
+
+Figura de la intensidad de la distribución de densidad esperado para el porcentaje de traslape de acuerdo a la intensidad de la interacción.
+
+```{r}
+ggplot2.density (data= b_a, xName = "esperado", groupName = "Interaccion_2",
+                 alpha=0.5, fillGroupDensity = T,  xtitle = expression(~Predicted~area~(km^{2})), ytitle=   "Density", groupColors=c('#218380', "#9D75CB"))+
+guides(fill = guide_legend(reverse = TRUE))+
+theme(legend.position = "bottom", legend.title=element_blank(), axis.line = element_line(linewidth =1, colour="black"),
+        #axis.text.x = element_blank(),
+        axis.line.y.left = element_line(linewidth = 0.8, colour = "black"),
+        panel.background = element_rect(fill = "white"),
+        #strip.background = element_rect(colour = "white", fill = "white"),
+        #strip.text = element_text(size = 18),
+        axis.text=element_text(size=18),
+        axis.title=element_text(size=18,face="bold"),
+        legend.text=element_text(size=10),
+        panel.border = element_rect(colour = "black", fill=NA, size=1),
+        plot.title = element_text(hjust = 0.5, size= 18)
+  )
+
+```
+
+```{r}
+area_aves<- ggplot2.density (data= b_a, xName = "esperado", groupName = "Interaccion_2",
+                 alpha=0.5, fillGroupDensity = T,  xtitle = expression(bold(~Predicted~area~(km^{2}))), ytitle=  "", groupColors=c('#218380', "#9D75CB"))+
+guides(fill = guide_legend(reverse = TRUE))+
+theme(legend.position = "none", legend.title=element_blank(), axis.line = element_line(linewidth =1, colour="black"),
+       # axis.text.x = element_blank(),
+        axis.line.y.left = element_line(linewidth = 0.8, colour = "black"),
+        panel.background = element_rect(fill = "white"),
+        #strip.background = element_rect(colour = "white", fill = "white"),
+        #strip.text = element_text(size = 18),
+        axis.title=element_text(size=18, face="bold"),
+        legend.text=element_text(size=10),
+        panel.border = element_rect(colour = "black", fill=NA, size=1),
+        plot.title = element_text(hjust = 0.5, size= 18)
+  )
+
+area_aves
+
+```
+
+El efecto marginal de la intensidad de la interacción es en promedio de -2919 km (resta entre las areas estimadas de aves obligadas - facultativas), sin embargo su intervalo va de -6295 a 248 $km^2$. Lo que nos confirma que hay una tendencia a menores áreas de distribución cuando la intensidad de la interacción es obligada que cuando es facultativa.
+
+```{r}
+emmeans(brms_area, ~ Int,
+        regrid = "response") %>% 
+  contrast(method = "revpairwise")
+```
+Observamos graficamente el intervalo del efecto marginal de la intensidad de la interacción.
+```{r}
+marginal_effects_a <- as.data.frame( b_a$esperado[b_a$Interaccion == "Obligate"] - b_a$esperado[b_a$Interaccion=="Facultative"])
+colnames(marginal_effects_a) <- c("Marginal")
+
+ggplot(marginal_effects_a, aes(x = Marginal)) +
+  stat_halfeye(.width = c(0.8, 0.95), point_interval = "median_hdi",
+               fill = "#9d75cb") +
+  labs(x = "Average marginal effect of having an obligate ant-following bird interaction", 
+       y = NULL, caption = "80% and 95% credible intervals shown in black") +
+ theme(legend.position = "None", legend.title=element_blank(), axis.line = element_line(linewidth =1, colour="black"),
+        #axis.text.x = element_blank(),
+        axis.line.y.left = element_line(linewidth = 0.8, colour = "black"),
+        panel.background = element_rect(fill = "white"),
+        #strip.background = element_rect(colour = "white", fill = "white"),
+        #strip.text = element_text(size = 18),
+        axis.text=element_text(size=18),
+        axis.title=element_text(size=18,face="bold"),
+        legend.text=element_text(size=14),
+        panel.border = element_rect(colour = "black", fill=NA, size=1),
+        plot.title = element_text(hjust = 0.5, size= 18)
+  )
+
+
+```
+
+Figuras
+
+```{r}
+plot_grid(traslape_aves, area_aves, greedy = T)
+```
+
